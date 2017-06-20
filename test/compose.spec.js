@@ -1,16 +1,22 @@
 const { expect } = require('chai');
-const { compose, objectValidator, arrayValidator } = require('../lib/compose');
+const {
+  allOf,
+  someOf,
+  objectValidator,
+  arrayValidator,
+} = require('../lib/compose');
 const { isOK, isErr, ok, err } = require('../lib/result');
 const {
   validateIsObject,
+  validateIsArray,
   validateRequiredFields,
   validateExtraFields,
   validateItemsTypecheck,
 } = require('../lib/validators');
 
 describe('compose', () => {
-  describe('#compose()', () => {
-    it('should compose multiple validators into a single validator', () => {
+  describe('#allOf()', () => {
+    it('should compose multiple validators into a single validator such that they all must succeed', () => {
       const schema = {
         field1: {
           required: true,
@@ -20,9 +26,7 @@ describe('compose', () => {
         },
       };
 
-      const validate = compose(validateIsObject, validateRequiredFields)(
-        schema
-      );
+      const validate = allOf(validateIsObject, validateRequiredFields)(schema);
 
       expect(isErr(validate('not an object'))).to.be.true;
       expect(isErr(validate({}))).to.be.true;
@@ -41,9 +45,9 @@ describe('compose', () => {
         },
       };
 
-      const v1 = compose(validateIsObject);
-      const v2 = compose(v1, validateRequiredFields);
-      const v3 = compose(v2, validateExtraFields);
+      const v1 = allOf(validateIsObject);
+      const v2 = allOf(v1, validateRequiredFields);
+      const v3 = allOf(v2, validateExtraFields);
       const validate = v3(schema);
 
       expect(isErr(validate('not an object'))).to.be.true;
@@ -67,7 +71,7 @@ describe('compose', () => {
         },
       };
 
-      const validate = compose(
+      const validate = allOf(
         validateIsObject,
         validateRequiredFields,
         validateExtraFields
@@ -93,11 +97,83 @@ describe('compose', () => {
           ? ok()
           : err([`Couldn't find arbitraryField`]));
 
-      const validate = compose(validateIsObject, arbitraryValidator)({});
+      const validate = allOf(validateIsObject, arbitraryValidator)({});
 
       expect(isErr(validate(''))).to.be.true;
       expect(isErr(validate({}))).to.be.true;
       expect(isOK(validate({ arbitraryField: 'boo' }))).to.be.true;
+    });
+  });
+
+  describe('#someOf()', () => {
+    it('should compose multiple validators such that only one needs to succeed', () => {
+      const validate = someOf(validateIsObject(), validateIsArray());
+
+      expect(isErr(validate('neither object nor array'))).to.be.true;
+      expect(isErr(validate(123))).to.be.true;
+
+      expect(isOK(validate({}))).to.be.true;
+      expect(isOK(validate([]))).to.be.true;
+    });
+
+    it('returns errors from all the validators if it fails', () => {
+      const validate = someOf(validateIsObject(), validateIsArray());
+
+      expect(validate(123).errors).to.deep.equal([
+        'Data was not an object',
+        'Data was not an array',
+      ]);
+    });
+
+    it('works as part of a schema', () => {
+      const objectSchema = {
+        field2: {
+          required: true,
+          type: 'string',
+        },
+      };
+
+      const arraySchema = {
+        type: 'number',
+        predicates: [
+          {
+            test: n => n <= 3,
+            onError: n => `${n} was greater than 3`,
+          },
+        ],
+      };
+
+      const schema = {
+        field1: {
+          schemaValidator: someOf(
+            objectValidator(objectSchema),
+            arrayValidator(arraySchema)
+          ),
+        },
+      };
+
+      const validate = objectValidator(schema);
+
+      expect(isErr(validate({ field1: 123 }))).to.be.true;
+      expect(isErr(validate({ field1: 'abc' }))).to.be.true;
+
+      expect(isOK(validate({ field1: [] }))).to.be.true;
+      expect(isOK(validate({ field1: [1, 2, 3] }))).to.be.true;
+      expect(isErr(validate({ field1: [2, 3, 4] }))).to.be.true;
+
+      expect(isOK(validate({ field1: { field2: 'abc' } }))).to.be.true;
+      expect(isErr(validate({ field1: { field2: 123 } }))).to.be.true;
+      expect(isErr(validate({ field1: { field3: 'abc' } }))).to.be.true;
+    });
+
+    it('can be composed multiple times', () => {
+      const v1 = someOf(validateIsObject());
+      const validate = someOf(v1, validateIsArray());
+
+      expect(isErr(validate(123))).to.be.true;
+      expect(isErr(validate('abc'))).to.be.true;
+      expect(isOK(validate({}))).to.be.true;
+      expect(isOK(validate([]))).to.be.true;
     });
   });
 

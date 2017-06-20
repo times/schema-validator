@@ -147,6 +147,7 @@ describe('validators', () => {
       field2: {
         type: 'number',
       },
+      field3: {},
     };
 
     const validate = validateFieldsTypecheck(schema);
@@ -177,6 +178,18 @@ describe('validators', () => {
       });
       expect(isOK(res)).to.be.true;
       expect(res.errors).to.deep.equal([]);
+    });
+
+    it("should return an OK for fields that don't specify a type", () => {
+      const res1 = validate({
+        field3: 'a string',
+      });
+      expect(isOK(res1)).to.be.true;
+
+      const res2 = validate({
+        field3: 123,
+      });
+      expect(isOK(res2)).to.be.true;
     });
   });
 
