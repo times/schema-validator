@@ -45,13 +45,13 @@ The build process uses Rollup to generate UMD and ES module versions of the bund
 
 ## Docs
 
-- [Typechecking](#Typechecking)
-  - [isISOString](#isISOString)
-  - [isDate](#isDate)
-  - [isObject](#isObject)
-  - [isArray](#isArray)
-  - [isNull](#isNull)
-  - [isType](#isType)
+- [Typechecking](#typechecking)
+  - [isISOString](#isisostring)
+  - [isDate](#isdate)
+  - [isObject](#isobject)
+  - [isArray](#isarray)
+  - [isNull](#isnull)
+  - [isType](#istype)
 
 ### Typechecking
 
