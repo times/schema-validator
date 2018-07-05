@@ -15,7 +15,7 @@ import {
 export type Errors = Array<string>;
 
 /**
- * A Result can be OK, which is valid, or an Err, which is invalid. An Err
+ * A Result can be OK, which is valid, or an Err, which is invalid. An Err contains
  * an array of errors, an optional type, and optional nested error items
  */
 type OK = {| valid: true |};

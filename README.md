@@ -68,8 +68,21 @@ The build process uses Rollup to generate UMD and ES module versions of the bund
   - [validateArrayItems](#validatearrayitems)
   - [validateArrayItemsHaveType](#validatearrayitemshavetype)
 - [Composing validators](#composing-validators)
+  - [allWhileOK](#allwhileok)
+  - [all](#all)
+  - [some](#some)
 - [Results](#results)
+  - [ok](#ok)
+  - [err](#err)
+  - [nestedErr](#nestederr)
+  - [isOK](#isok)
+  - [isErr](#iserr)
+  - [mapErrors](#maperrors)
+  - [mergeResults](#mergeresults)
+  - [concatResults](#concatresults)
 - [Extracting errors](#extracting-errors)
+  - [printVerbose](#printverbose)
+  - [getErrors](#geterrors)
 - [Working with schemas](#working-with-schemas)
 
 ### Typechecking
@@ -297,9 +310,231 @@ getErrors(validate(['one', 2, 'three'])); //=> [`At item 1: "2" failed to typech
 
 ### Composing validators
 
+For more complex validation logic you will probably want to combine a series of smaller validators into one larger validator. The library provides several functions to compose validators like this.
+
+Each composition function accepts an array of validators (functions that accept some data and return a [Result](#results)) and returns a new validator. The data passed to the composed validator will be passed to each of the validators in turn.
+
+#### allWhileOK
+
+Runs an array of validators in order until one of them fails. The failing validator's errors will be returned. Succeeds if all of the validators succeed.
+
+This is useful for when one validator depends on another - for example, to check that a value is a string before checking its `length` property.
+
+```js
+const validateIsString = validateIsType('string');
+
+const validateIsShortWord = fromPredicate(
+  word => word.length < 5,
+  word => `"${word}" was too long`
+);
+
+const validateStartsWithA = fromPredicate(
+  word => word.charAt(0) === 'A',
+  word => `"${word}" did not start with A`
+);
+
+const validateWord = allWhileOK([
+  validateIsString,
+  validateIsShortWord,
+  validateStartsWithA,
+]);
+
+getErrors(validateWord(123)); //=> [`123 failed to typecheck (expected string)`]
+
+getErrors(validateWord('abracadabra')); //=> [`"abracadabra" was too long`]
+
+getErrors(validateWord('tea')); //=> [`"tea" did not start with A`]
+
+isOK(validateWord('Andy')); //=> true
+```
+
+#### all
+
+Runs an array of validators in order and returns the combined errors of any validators that fail. Succeeds if all of the validators succeed.
+
+This is well suited for times when the individual validators do not depend on each other.
+
+```js
+const validateIsNotNull = fromPredicate(
+  val => !isNull(val),
+  () => `Value was null`
+);
+
+const validateIsNotUndefined = fromPredicate(
+  val => !isType('undefined')(val),
+  () => `Value was undefined`
+);
+
+const validateIsNotVoid = all([validateIsNotNull, validateIsNotUndefined]);
+
+getErrors(validateIsNotVoid(null)); //=> [`Value was null`]
+
+getErrors(validateIsNotVoid(undefined)); //=> [`Value was undefined`]
+
+isOK(validateIsNotVoid(123)); //=> true
+```
+
+#### some
+
+Runs an array of validators in order until one of them succeeds. If all of the validators fail, returns their combined errors.
+
+This is a good way to present a choice where you are happy for any of the options to succeed.
+
+```js
+const validateIsLarge = fromPredicate(
+  n => n > 100,
+  n => `${n} was not greater than 100`
+);
+
+const validateIsSmall = fromPredicate(
+  n => n < 5,
+  n => `${n} was not smaller than 5`
+);
+
+const validateNumber = some([validateIsLarge, validateIsSmall]);
+
+getErrors(validateNumber(50)); //=> [`50 was not greater than 100`, `50 was not smaller than 5`]
+
+isOK(validateNumber(123)); //=> true
+isOK(validateNumber(2)); //=> true
+```
+
 ### Results
 
+Validators are functions that accept some data and return a `Result`, which will be `OK` if the validator succeeded or an `Err` if it failed. An `Err` can contain one or more error message strings.
+
+The library provides several helper functions to work with the `Result` data type.
+
+#### ok
+
+Constructs an `OK` result. This is useful when you are writing your own validator and need to return a success.
+
+```js
+const result = ok();
+
+isOK(result); //=> true
+```
+
+#### err
+
+Constructs an `Err` result. This is useful when you are writing your own validator and need to return a failure.
+
+`err` accepts either an error message string or an array of error message strings.
+
+```js
+const result = err('Validation failed');
+
+getErrors(result); //=> [`Validation failed`]
+```
+
+#### nestedErr
+
+Constructs an `Err` result that contains nested errors. This is sometimes needed when writing more complex validators that work with arrays and objects.
+
+For example, when writing a validator that performs validation on every item in an array, `nestedErr` allows you to gather up those `Result`s and store them in a single structure.
+
+`nestedErr` accepts two arguments: the type of nested error (either `array` or `object`); and an object of nested results.
+
+```js
+const nestedArrayResult = nestedErr('array', {
+  0: 'Item 0 failed',
+  1: 'Item 1 failed',
+});
+
+getErrors(nestedArrayResult); //=> [`At item 0: Item 0 failed`, `At item 1: Item 1 failed`]
+
+const nestedObjectResult = nestedErr('object', {
+  x: 'Field x failed',
+  y: 'Field y failed',
+});
+
+getErrors(nestedObjectResult); //=> [`At field "x": Field x failed`, `At field "y": Field y failed`]
+```
+
+#### isOK
+
+Checks whether the given result is `OK`.
+
+```js
+const success = ok();
+const failure = err('Some error');
+
+isOK(success); //=> true
+isOK(failure); //=> false
+```
+
+#### isErr
+
+Checks whether the given result is an `Err`.
+
+```js
+const success = ok();
+const failure = err('Some error');
+
+isErr(success); //=> false
+isErr(failure); //=> true
+```
+
+#### mapErrors
+
+Applies a function to every error in a `Result`. The mapping function will receive two arguments: the error string, and the index of the error in the internal error array.
+
+The function will also be applied to nested errors, where the index will be reset.
+
+```js
+const result = err(['Error one', 'Error two']);
+
+const prefixErrors = mapErrors((error, index) => `${index}: ${error}`);
+
+const mappedResult = prefixErrors(result);
+
+getErrors(mappedResult); //=> [`0: Error one`, `1: Error two`]
+```
+
+#### mergeResults
+
+Recursively combines two results. If the results are nested they must be of the same type (`array` or `object`). The internal arrays of errors are merged by concatenating the arrays.
+
+```js
+const result1 = err('Error one');
+const result2 = err(['Error two', 'Error three']);
+
+const mergedResult = mergeResults(result1, result2);
+
+getErrors(mergedResult); //=> [`Error one`, `Error two`, `Error three`]
+```
+
+#### concatResults
+
+Combines an array of results using `mergeResults`. The results should all be of the same type (`array` or `object`).
+
+```js
+const results = [err('Error one'), ok(), err(['Error two', 'Error three'])];
+
+const combinedResult = concatResults(results);
+
+getErrors(mergedResult); //=> [`Error one`, `Error two`, `Error three`]
+```
+
 ### Extracting errors
+
+To extract errors from a `Result` you should normally use the `getErrors` function. In future there will be several functions available that will format the errors in different ways.
+
+#### printVerbose
+
+Formats errors in a "verbose" way. For example: `At item 0: at field "a": 123 failed to typecheck (expected string)`.
+
+```js
+const result = nestedError('object', {
+  // @todo
+});
+
+printVerbose(result); // => @todo
+```
+
+#### getErrors
+
+Alias of `printVerbose`.
 
 ### Working with schemas
 
