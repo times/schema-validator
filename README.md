@@ -84,6 +84,13 @@ The build process uses Rollup to generate UMD and ES module versions of the bund
   - [printVerbose](#printverbose)
   - [getErrors](#geterrors)
 - [Working with schemas](#working-with-schemas)
+  - [validateAsObjectSchema](#validateasobjectschema)
+  - [validateAsArraySchema](#validateasarrayschema)
+  - [fromObjectSchema](#fromobjectschema)
+  - [fromObjectSchemaStrict](#fromobjectschemastrict)
+  - [fromArraySchema](#fromarrayschema)
+  - [objectValidator](#objectvalidator)
+  - [arrayValidator](#arrayvalidator)
 
 ### Typechecking
 
@@ -437,15 +444,15 @@ For example, when writing a validator that performs validation on every item in 
 
 ```js
 const nestedArrayResult = nestedErr('array', {
-  0: 'Item 0 failed',
-  1: 'Item 1 failed',
+  0: err('Item 0 failed'),
+  1: err('Item 1 failed'),
 });
 
 getErrors(nestedArrayResult); //=> [`At item 0: Item 0 failed`, `At item 1: Item 1 failed`]
 
 const nestedObjectResult = nestedErr('object', {
-  x: 'Field x failed',
-  y: 'Field y failed',
+  x: err('Field x failed'),
+  y: err('Field y failed'),
 });
 
 getErrors(nestedObjectResult); //=> [`At field "x": Field x failed`, `At field "y": Field y failed`]
@@ -522,14 +529,16 @@ To extract errors from a `Result` you should normally use the `getErrors` functi
 
 #### printVerbose
 
-Formats errors in a "verbose" way. For example: `At item 0: at field "a": 123 failed to typecheck (expected string)`.
+Formats errors in a "verbose" way.
 
 ```js
-const result = nestedError('object', {
-  // @todo
+const result = nestedError('array', {
+  0: nestedError('object', {
+    a: err('123 failed to typecheck (expected string)'),
+  }),
 });
 
-printVerbose(result); // => @todo
+printVerbose(result); // => [`At item 0: at field "a": 123 failed to typecheck (expected string)`]
 ```
 
 #### getErrors
@@ -538,89 +547,132 @@ Alias of `printVerbose`.
 
 ### Working with schemas
 
----
+One of the library's most powerful features is the ability to build validators for arrays and objects based on schemas.
 
-Validate an object based on a schema:
+A schema for an adult person object might look like so:
 
 ```js
-const christopher = {
-  name: 'Christopher',
+const personSchema = {
+  name: {
+    type: 'string',
+    required: true,
+  },
+  age: {
+    type: 'number',
+    required: false,
+    validator: fromPredicate(age => age > 18, age => `${age} is too young`),
+  },
 };
-validatePerson(christopher); // { valid: false, errors: [ `At field "name": "Christopher" was longer than 10` ] }
 ```
 
-Validate an array based on a schema:
+In this example the schema specifies that the object:
+
+- must have a `name` property that is a string
+- may or may not have an `age` property; if the property does exist, it must be a number and greater than 18
+
+The schema can then be used like so:
 
 ```js
-const { arrayValidator, ok, err } = require('@times/data-validator');
+const validate = objectValidator(personSchema);
 
-const numberSchema = {
+getErrors(validate(123)); //=> [`123 failed to typecheck (expected object)`]
+
+getErrors(validate({ name: 456 })); //=> [`At field "name": 456 failed to typecheck (expected object)`]
+
+getErrors(validate({ name: 'Jimmy', age: 10 })); //=> [`At field "age": 10 is too young`]
+
+isOK(validate({ name: 'Jimmy' })); //=> true
+
+isOK(validate({ name: 'Jimmy', age: 25 })); //=> true
+```
+
+There are three properties that can be passed for each field in an object schema. All of them are optional.
+
+- `type`: string specifying the type of the field e.g. `'string'`, `'number'`, `'date'`
+- `required`: boolean specifying whether the field is required. If not set, defaults to `false`
+- `validator`: a validator that should be run on the contents of the field
+
+Array schemas consist of the same (optional) `type` and `validator` properties, which will be applied to every item in the array. For example:
+
+```js
+const arraySchema = {
   type: 'number',
-  validator: n => (n >= 10 ? ok() : err([`${n} was less than 10`])),
+  validator: validateIsIn([1, 2, 3, 4, 5]),
 };
-
-const validateNumber = arrayValidator(numberSchema);
-
-const numbers1 = [9, 10, 11];
-validateNumber(numbers1); // { valid: false, errors: [ `At item 0: 9 was less than 10` ] }
-
-const numbers2 = ['ten', 11];
-validateNumber(numbers2); // { valid: false, errors: [ `Item "ten" failed to typecheck (expected number)` ] }
 ```
 
-## Schema properties
-
-An object schema consists of field names that map to sets of properties. Each set of properties can optionally include:
-
-- `type`: the type of the field. Can be string, number, date, array, object, function...
-- `required`: whether the field is required. Should be true or false
-- `validator`: a nested validator that should be applied to the contents of the field
-
-An array schema can similarly have the following optional properties:
-
-- `type`: the type of the items in the array
-- `validator`: a nested validator that should be applied to each item in the array
-
-## Compose
-
-Two useful functions, `objectValidator` and `arrayValidator`, are provided by default. Both accept a schema and turn it into a validator.
-
-If these functions are insufficient, however, there are several functions available for you to build and compose your own validators.
-
-A validator is any function with the signature `data -> Result`, where a Result can be constructed using the provided `ok()` or `err()` functions. `err()` accepts a single error message or an array of error messages.
-
-To chain multiple validators together you can use the `all` or `some` composition functions. For example:
+Here the schema is stating that each item in the array must be a number in the range 1-5. It can then be used like so:
 
 ```js
-const validatorOne = data => data <= 3 ? ok() : err(`Data was greater than three`);
+const validate = arrayValidator(arraySchema);
 
-const validatorTwo = ...
+getErrors(validate([1, 'two', 3])); // => [`At item 1: 'two' failed to typecheck (expected number)`]
 
-// Composing with `all` returns a validator that will succeed if all of the given validators succeed
-const composedValidator1 = all([
-  validatorOne,
-  validatorTwo
-]);
-const result1 = composedValidator1(data);
-
-// Using `some` returns a validator that will succeed if at least one of the given validators succeeds
-const composedValidator2 = some([
-  validatorOne,
-  validatorTwo,
-]);
-const result2 = composedValidator2(data);
+getErrors(validate([1, 2, 10, 3])); // => [`At item 2: Value must be one of 1, 2, 3, 4, 5 (got "10")`]
 ```
 
-You can of course write your own composition functions. A composition function must accept an array of validators and run them, somehow combining the Results into a single Result.
+#### validateAsObjectSchema
 
-## Converting from schemas
+Validates that an object schema is in the correct format.
 
-If you would like to use a schema beyond the supported object and array schemas, you can make use of the following exported functions:
+```js
+isErr(validateAsObjectSchema(123)); //=> true
 
-- `fromObjectSchema`: Converts an object schema to an array of validators
-- `fromObjectSchemaStrict`: Converts an object schema to an array of validators, including a validator that checks the object has no extra fields
-- `fromArraySchema`: Converts an array schema to an array of validators
+isOK(validateAsObjectSchema({ x: { type: 'number' } })); //=> true
+```
 
-You can also write your own schema conversion functions should you wish.
+#### validateAsArraySchema
 
-The resulting list of validators can then be combined into a single validator using `all`, `some` or your own composition function; this is how the default `objectValidator` and `arrayValidator` helpers work.
+Validates that an array schema is in the correct format.
+
+```js
+isErr(validateAsArraySchema(123)); //=> true
+
+isOK(validateAsArraySchema({ type: 'date' })); //=> true
+```
+
+#### fromObjectSchema
+
+Converts an object schema into a series of validators.
+
+```js
+fromObjectSchema({
+  x: {
+    type: 'number',
+    required: true,
+    validator: fromPredicate(n => n > 3, () => `Too low`),
+  },
+});
+//=> Returns an array of validators that will check:
+//    - is the data an object?
+//    - does the data have field `x`?
+//    - is field `x` a number?
+//    - is the number at `x` greater than 3?
+```
+
+#### fromObjectSchemaStrict
+
+The same behaviour as `fromObjectSchema`, but adds an extra check that the data doesn't have any fields beyond those specified in the schema.
+
+#### fromArraySchema
+
+Converts an array schema into a series of validators.
+
+```js
+fromArraySchema({
+  type: 'number',
+  validator: fromPredicate(n => n > 3, () => `Too low`),
+});
+//=> Returns an array of validators that will check:
+//    - is the data an array?
+//    - is each array item a number?
+//    - is each array item greater than 3?
+```
+
+#### objectValidator
+
+This is the function you will want to use most of the time when validating objects. It accepts an object schema and returns a single validator to check data against. See the example [above](#working-with-schemas).
+
+#### arrayValidator
+
+This is the function you will want to use most of the time when validating arrays. It accepts an array schema and returns a single validator to check data against. See the example [above](#working-with-schemas).
